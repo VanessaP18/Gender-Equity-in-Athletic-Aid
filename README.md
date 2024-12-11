@@ -1,5 +1,4 @@
-# Gender Equity in Athletic Aid:  
-The Impact of Institutional Financial Characteristics and Student Demographics in College Sports 
+# Gender Equity in Athletic Aid: The Impact of Institutional Financial Characteristics and Student Demographics in College Sports 
 
 This project is for my SPED 7500 final assignment. Attached are my code in R Markdown and the HTML file.
 The data is from the Equity in Athletics Survey and the College Scorecard, both sourced from the U.S. Department of Education for the 2022-2023 academic year

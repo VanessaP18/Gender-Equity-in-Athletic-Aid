@@ -1,0 +1,379 @@
+---
+title: "Pei_Final"
+author: "Vanessa"
+date: "2024-11-29"
+output: html_document
+---
+
+```{r}
+library(tidyverse) #calling package
+library(ggplot2) #calling package
+library(dplyr) #calling package
+library(readxl) #calling package
+```
+
+Call in the Equity in Athletics Survey dataset, and selected relvent variable for analysis. The institution sector was grouped to compare public(0) and private(1) colleges using variale sector type. 
+```{r}
+sport_df <- read_xlsx("EADA_2023.xlsx") %>% #read in the Equity in Athletics Survey dataset
+  rename(UNITID = unitid) %>% #rename unitid to UNITID, preparing for merge with College Scorecard
+  select(UNITID, sector_cd, STUDENTAID_MEN, STUDENTAID_WOMEN, IL_SUM_PARTIC_MEN,  IL_SUM_PARTIC_WOMEN, RECRUITEXP_MEN, RECRUITEXP_WOMEN, HDCOACH_SALARY_MEN, HDCOACH_SALARY_WOMEN, IL_MEN_TOTAL_HEADCOACH, IL_WOMEN_TOTAL_HDCOACH, NUM_ASCOACH_MEN, NUM_ASCOACH_WOMEN, IL_PARTIC_MEN, IL_PARTIC_WOMEN, IL_OPEXPPERPART_MEN, IL_OPEXPPERPART_WOMEN, ClassificationCode) %>% #select relevant columns
+  mutate(
+    sector_type = case_when(
+      sector_cd %in% c(1, 4) ~ 0,   # sector_cd 1 and 4 are public college
+      sector_cd %in% c(2, 3, 5) ~  1)) %>% # sector_cd 2,3,5 are private college 
+  select(-sector_cd) 
+
+#glimpse(sport_df)
+```
+
+Call in the College Scorecard dataset, and selected relvent variable for analysis. 
+```{r}
+score_df <- read_csv("MERGED2022_23_PP.csv") %>% #read in the the College Scorecard dataset
+  select (UNITID, SATVR25, SATVR75, SATMT25, SATMT75, ACTCM25, ACTCM75, ACTEN25, ACTEN75, ACTMT25, ACTMT75, ADM_RATE, COSTT4_A) #select relevant columns
+
+#glimpse(score_df)
+```
+To prepare a single dataset for analysis, the tibbles from the Equity in Athletics Survey and the College Scorecard were merged using the common identifier UNITID, which is consistent across both datasets. This ensures that each institution is correctly matched based on its unique identifier. The resulting dataset combines relevant variables from both sources, creating a comprehensive dataset for further analysis.
+
+The ourcome variables were dropped to avoid multicollinearity in the correlation analysis.
+```{r}
+sport_score_df <- sport_df %>%
+  left_join(score_df, by = "UNITID") %>% #merge the two databases
+  drop_na() %>% #drop rows with NA values 
+  select(-STUDENTAID_MEN, -STUDENTAID_WOMEN) #unselect the outcome variables 
+```
+
+The correlation analysis was conducted to explore the relationships between the variables in the dataset. 
+
+PCA requires the removal of variables with strong multicollinearity (r>0.9) to ensure that the components accurately represent the variance in the data without redundancy.
+```{r}
+glimpse(sport_score_df)
+
+sport_score_tib <- sport_score_df[,2:29] #UNITID is not needed for analysis, so it is removed for correlation analysis
+
+corr_sport_score_tib <- cor(sport_score_tib)
+
+#corr_sport_score_tib 
+```
+From the result, variables with r>0.9 and should be removed for PCA are RECRUITEXP_WOMEN, HDCOACH_SALARY_WOMEN, IL_PARTIC_MEN, IL_PARTIC_WOMEN, IL_OPEXPPERPART_WOMEN, SATVR25, SATVR75, ACTEN25, ACTEN75.
+
+Remove variables with strong multicollinearity (r>0.9), 
+```{r}
+score_sport_tib <- sport_score_tib %>%
+    select(-c(RECRUITEXP_WOMEN, HDCOACH_SALARY_WOMEN, IL_PARTIC_MEN, IL_PARTIC_WOMEN, IL_OPEXPPERPART_WOMEN, SATVR25, SATVR75, ACTEN25, ACTEN75))
+
+glimpse(score_sport_tib)
+
+corr_sport_score_tib_2 <- cor(score_sport_tib)
+
+#corr_sport_score_tib_2
+
+```
+Scaling ensures that each variable contributes equally to the PCA computation. This is important because variables with larger scales can dominate the analysis, leading to inaccurate results.
+```{r}
+library(psych)
+
+scaled_score_sport <- score_sport_tib %>% 
+  mutate_at(c(1:19), ~(scale(.) %>% as.vector)) #scale all 18 variables
+
+glimpse(scaled_score_sport)
+
+psych::describe(scaled_score_sport) #make sure all means are 0, and sd is 1. This also gives us a lot of descriptives quickly
+```
+This is just to understand the underlying data. The correlation between a variable and a principal component (PC) is used as the coordinates of the variable on the PC. The length of the vector represents the correlation between the variable and the PC, while the angle between vectors indicates the correlation between variables.
+
+```{r}
+library(factoextra) #extract and visualize the output of multivariate data analyses, including 'PCA'
+
+#line below runs a simple PCA with a component for each variable. 
+#the most variance will be explained in component 1 and 2
+viz_pca <- prcomp(scaled_score_sport, center = TRUE,scale. = TRUE)
+
+
+#Graph of variables. Positive correlated variables point to the same side of the plot. Negative correlated variables point to opposite sides of the graph.
+
+fviz_pca_var(viz_pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE #Avoid overlapping text if possible 
+             )
+```
+Through visualization, it seems that the following are loading together:
+# 1. College sport team expenses  
+# 2. SAT and ACT scores
+# 3. Number of coachs and participants
+```{r}
+cortest.bartlett(scaled_score_sport, 773) #there are 773 observations
+# Bartlett's test of sphericity is significant, indicating that the correlation matrix is not an identity matrix.
+# p value below .05, so it is not an identity matrix
+```
+
+```{r}
+KMO(scaled_score_sport) 
+#all data above .50 and overall MSA is strong
+```
+
+```{r}
+pca_base <- principal(scaled_score_sport, nfactors = 19, rotate = "none")
+#nfactors = 18, becuase there are 18 variable
+
+plot(pca_base$values, type = "b")
+#the plot shows the variance explained by 4 components.
+```
+
+```{r}
+pca_resid <- principal(scaled_score_sport, nfactors = 4 , rotate = "none")
+pca_resid #results. 
+
+#require correlation matrix for final data
+corMatrix<-cor(scaled_score_sport)
+
+#next,create an object from the correlation matrix and the pca loading. Call it residuals. It will contain the factor residuals
+residuals<-factor.residuals(corMatrix, pca_resid$loadings)
+
+#call a histogram to check residuals
+hist(residuals) 
+# The residuals are normally distributed but exhibit left skewness.
+```
+
+```{r}
+# rotation. Since factors should be related, use oblique technique (promax).
+pca_final <- principal(scaled_score_sport, nfactors = 4, rotate = "promax")
+pca_final #results. 
+
+print.psych(pca_final, cut = 0.3, sort = TRUE)
+```
+The components are following the pattern of the variables, and our PCA result. The first component is related to to SAT and ACT scores, the second component is related to the college sport team expenditure. The third component is related to  the number of coaches and participants. The fourth component is related to the college characteristics.
+
+```{r}
+plot(pca_final)
+#component 1 is black
+#component 3 is blue
+#component 2 is red
+#component 4 is grey
+fa.diagram(pca_final)
+```
+Component 1: entrance_exam_scores: ACT and SAT scores
+
+Component 2: college_sport_expenditure: coach salary costs for men's teams, recruitment expenditure for men's teams, and total expenses per participant for men's teams
+
+Component 3: numbers_of_coaches_and_participants: the number of head coaches for men's and women's teams, the number of assistant coaches for men's and women's teams, and the total number of participants in men's and women's teams
+
+Component 4: college_characteristics
+
+```{r}
+pca_final_scores <- as.data.frame(pca_final$scores) #scores for each text on each factor.
+head(pca_final_scores)
+
+#rename columns
+pca_final_scores <- pca_final_scores %>% 
+  rename(entrance_exam_scores = RC1, college_sport_expenditure = RC2, numbers_of_coaches_and_participants = RC3, college_characteristics = RC4) #rename the components to be more descriptive
+
+#combine this dataframe with earlier dataframe (sport_score_df, the dataframe with UNITID, easier to merge with the outcome variable later on)
+
+glimpse(sport_score_df)
+
+final_score_sport_df <- cbind(glimpse(sport_score_df), pca_final_scores) #combine the two dataframes
+
+```
+```{r}
+AthleticAid_comparsion <- read_xlsx("EADA_2023.xlsx") %>%
+  select(STUDENTAID_MEN, STUDENTAID_WOMEN) %>%
+  pivot_longer(
+    cols = c(STUDENTAID_MEN, STUDENTAID_WOMEN),
+    names_to = "Gender",
+    values_to = "Student_Aid_Amount" # transform STUDENTAID_MEN and STUDENTAID_WOMEN into two rows for each institution
+  )
+
+total_studentaid_men <- sum(AthleticAid_comparsion$STUDENTAID_MEN, na.rm = TRUE)
+total_studentaid_women <- sum(AthleticAid_comparsion$STUDENTAID_WOMEN, na.rm = TRUE)
+cat("Total Student Aid for Men", total_studentaid_men, "\n") #The total athletic student aid to men is 2598512628 
+cat("Total Student Aid for Women", total_studentaid_women, "\n") #The total athletic student aid to women is2158797077 
+```
+Across the 2023 Equity in Athletics Survey's 2,040 institutions, the total athletic student aid for men amounted to $2,598,512,628, while women received $2,158,797,077. This represents a difference of $439,715,551, with women receiving 8.31% less athletic student aid than men. 
+
+```{r}
+# Rename the outcome variable to HigherAthleticAid
+# HigherAthleticAid_Men indicating whether the school provides higher athletic student aid to men, and HigherAthleticAid_Women indicating whether the school provides higher athletic student aid to women. 
+# Then convert outcome variables to a factor.
+
+sport_2 <- read_xlsx("EADA_2023.xlsx") %>% # Read in the data
+  rename(UNITID = unitid) %>% # Rename `unitid` to `UNITID`, preparing for merge with College Scorecard
+  mutate(HigherAthleticAid = ifelse(STUDENTAID_MEN > STUDENTAID_WOMEN, "HigherAthleticAid_Men", "HigherAthleticAid_Women"), HigherAthleticAid = as.factor(HigherAthleticAid)) %>% # Convert `HigherAthleticAid` to a factor
+  select(UNITID, HigherAthleticAid) #select relevant columns
+
+final_score_sport_df <- final_score_sport_df %>%
+  left_join(sport_2, by = "UNITID") %>% #merge the two datasets using UNITID 
+  select(HigherAthleticAid, entrance_exam_scores, college_sport_expenditure, numbers_of_coaches_and_participants, college_characteristics) #select relevant columns
+
+glimpse(final_score_sport_df)
+```
+
+```{r}
+library(ggplot2)
+
+# Create boxplots to visualize the distribution of entrance exam scores by HigherAthleticAid (higher scholarship give to men or women)
+entrance_exam_scores_plot <- ggplot(final_score_sport_df, aes(x = HigherAthleticAid, y = entrance_exam_scores, fill = HigherAthleticAid)) +
+  geom_boxplot() +
+  xlab("HigherAthleticAid") +
+  ylab("Entrance Exam Scores") +
+  ggtitle("Distribution of Entrance Exam Scores")
+```
+
+```{r}
+# Create boxplots to visualize the distribution of College Sport Expenditure by HigherAthleticAid (higher scholarship give to men or women)
+college_sport_expenditure_plot <- ggplot(final_score_sport_df, aes(x = HigherAthleticAid, y = college_sport_expenditure, fill = HigherAthleticAid)) +
+  geom_boxplot() +
+  xlab("HigherAthleticAid") +
+  ylab("College Sport Expenditure") +
+  ggtitle("Distribution of College Sport Expenditure")
+```
+
+```{r}
+# Create boxplots to visualize the distribution of College Type by HigherAthleticAid (higher scholarship give to men or women)
+college_characteristics_plot <- ggplot(final_score_sport_df, aes(x = HigherAthleticAid, y = college_characteristics, fill = HigherAthleticAid)) +
+  geom_boxplot() +
+  xlab("HigherAthleticAid") +
+  ylab("College Characteristics") +
+  ggtitle("Distribution of College Characteristics")
+```
+
+```{r}
+# Create boxplots to visualize the distribution of Numbers of Coaches and Participants by HigherAthleticAid (higher scholarship give to men or women)
+numbers_of_coaches_and_participants_plot <- ggplot(final_score_sport_df, aes(x = HigherAthleticAid, y = numbers_of_coaches_and_participants, fill = HigherAthleticAid)) +
+  geom_boxplot() +
+  xlab("HigherAthleticAid") +
+  ylab("Numbers of Coaches and Participants") +
+  ggtitle("Distribution of Numbers of Coaches and Participants")
+```
+
+```{r}
+library(patchwork)
+
+# Combine the boxplots into a single plot
+combined_plot <- (entrance_exam_scores_plot | college_sport_expenditure_plot ) / (college_characteristics_plot | numbers_of_coaches_and_participants_plot )
+
+combined_plot
+```
+
+```{r}
+# HigherAthleticAid_Men is less than HigherAthleticAid_Women. We need to balance the outcome variable to avoid bias in the model.
+
+set.seed(123)
+
+# create the outcome variable groups to dummy variables for logistic regression
+HigherAthleticAid_Women <- filter(final_score_sport_df, HigherAthleticAid == "HigherAthleticAid_Women") 
+HigherAthleticAid_Men <- filter(final_score_sport_df, HigherAthleticAid == "HigherAthleticAid_Men")
+
+table(final_score_sport_df$HigherAthleticAid) #the original dataset has HigherAthleticAid_Men: 363 and HigherAthleticAid_Women 410
+
+HigherAthleticAid_Women_downsampled <- sample_n(HigherAthleticAid_Women, nrow(HigherAthleticAid_Men))
+balanced_final_df <- bind_rows(HigherAthleticAid_Women_downsampled, HigherAthleticAid_Men) #downsample HigherAthleticAid_Women to make the two outcome variable groups equal
+
+table(balanced_final_df$HigherAthleticAid) #Now, the balanced dataset has HigherAthleticAid_Men 363,and HigherAthleticAid_Women 363, we are ready for logistic regression
+
+levels(balanced_final_df$HigherAthleticAid) #levels the outcome variable group, HigherAthleticAid_Men is 0, HigherAthleticAid_Women is 1
+```
+
+```{r}
+glimpse(balanced_final_df)
+
+scaled_final_df <- balanced_final_df[,] %>% 
+  mutate_if(is.numeric, scale) # Scale numeric columns, excluding the outcome variables
+
+psych::describe(scaled_final_df) # Check the scaled data, making sure all numeric columns means are 0 and sd is 1
+```
+
+```{r}
+scaled_final_df %>%
+  group_by(HigherAthleticAid) %>%  # Group by HigherAthleticAid
+  summarise(across(where(is.numeric), list(mean = mean, sd = sd))) # Compare the means of HigherAthleticAid_Men and HigherAthleticAid_Women, then incorporate the findings into the regression analysis.
+```
+From the result, cchools offering higher athletic scholarships to men typically have lower entrance exam scores, higher sports expenditures, more coaches and participants, and less selective admission rates.
+
+```{r}
+final_cor <- scaled_final_df[,2:5]  # Exclude outcome variable, HigherAthleticAid, for corrlation 
+corr_final <- cor(final_cor) 
+corr_final #all r<0.7, no munlticollinearity, ready for next step
+```
+
+```{r}
+library(caret)
+
+# Set up 10-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10, verboseIter = FALSE)
+# method = cross validation, number = ten times (10 fold cross-validation)
+
+# Logistic regression with stepwise selection
+lr_cv10 <- train(HigherAthleticAid ~ ., 
+                 data = scaled_final_df, 
+                 method = "glmStepAIC",
+                 direction = "backward", 
+                 trControl = train.control,
+                 family = "binomial",
+                 verbose = FALSE
+)
+
+# Cross-validated model results
+print(lr_cv10) # kappa and accuracy
+summary(lr_cv10$finalModel) # Coefficients and model summary
+```
+
+``````{r}
+# Add in residuals and predictions
+scaled_final_df <- scaled_final_df %>%
+  mutate(predicted.probabilities = lr_cv10$finalModel$fitted.values,
+         actual = ifelse(HigherAthleticAid == "HigherAthleticAid_Men", 0, 1), 
+         predicted = ifelse(predicted.probabilities > 0.50, 1, 0), # threshold of 0.5
+         predicted = as.factor(predicted), #convert to factor
+         actual = as.factor(actual)) #convert to factor
+
+
+# create confusion matrix using CARET
+confusionMatrix(scaled_final_df$actual, 
+                scaled_final_df$predicted, 
+                mode = "everything", 
+                positive = "1")
+# There are 256 true positives and 278 true negatives, resulting in an accuracy of 73.6% and a Kappa of 0.4711(moderate agreement), 76.58% of the predicted positives are correct, The F1 score (0.7433) suggests a good balance between precision and recall.
+# indicating the model performs well for prediction
+```
+
+```{r}
+final_model <- lr_cv10$finalModel
+summary(final_model) # all variables are significant 
+```
+
+```{r}
+exp(final_model$coefficients)
+
+#create function for computing probabilities
+probabilities <- function(coef) {
+  odds <- exp(coef)
+  prob <- odds / (1 + odds)
+  return(prob)
+}
+
+#compute probabilities
+probabilities(final_model$coefficients)
+```
+* Colleges with better student demographics, such as higher SAT and ACT scores, are 76.6% more likely to provide higher female athletic student aid.
+
+* An increase in the number of personnel, including head coaches, assistant coaches, and athletic team members, decreases the likelihood of higher female athletic student aid by 43.8%.
+
+* Higher college expenses on sport, such as coach salaries, recruitment costs, and Total expenses per participant for men team, reduce the likelihood of higher female athletic student aid by 13.1%.
+
+* Private colleges or those with higher costs per academic year are 57% more likely to provide higher female athletic student aid.
+```{r}
+#put the actual and predicted values into a table
+mosaic_table <- table(scaled_final_df$actual, scaled_final_df$predicted)
+mosaic_table #check on that table
+
+#simple mosaic plot
+mosaicplot(mosaic_table,
+           main = "Confusion matrix for logistic regression",
+           sub = "Accuracy of prediction",
+           xlab = "Predicted",
+           ylab = "Actual",
+           color = "skyblue2",
+           border = "chocolate")
+```
